@@ -22,7 +22,3 @@ Designed for local sellers to reach customers easily with a modern, elegant UI.
 - Highlight local seller’s products
 - Focus on speed and ease of use for mobile customers
 
-## Setup
-1. Clone the repository  
-   ```bash
-   git clone https://github.com/your-username/urban-elegance.git
