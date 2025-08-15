@@ -1,25 +1,28 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useState } from "react";
+import PublicView from "./PublicView";
+import Login from "./Login";
+import AdminPanel from "./AdminPanel";
 
-function App() {
+export default function App() {
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+
+  // Listen to "Admin" button from PublicView
+  useEffect(() => {
+    const handler = () => setShowLogin(true);
+    window.addEventListener("open-login", handler);
+    return () => window.removeEventListener("open-login", handler);
+  }, []);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <>
+      {isAdminLoggedIn ? (
+        <AdminPanel />
+      ) : showLogin ? (
+        <Login onLogin={() => setIsAdminLoggedIn(true)} />
+      ) : (
+        <PublicView />
+      )}
+    </>
   );
 }
-
-export default App;
