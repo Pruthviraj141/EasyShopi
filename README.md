@@ -1,5 +1,5 @@
-# Easyshopi
-https://easyshopi.web.app/
+# Easyshopi  (https://easyshopi.web.app/) 
+
 Urban Elegance is a mobile-friendly e-commerce platform for women’s fashion — offering sarees, dresses, jewellery, and more.  
 Designed for local sellers to reach customers easily with a modern, elegant UI.
 
