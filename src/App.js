@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
+import { Routes, Route } from "react-router-dom";
 import PublicView from "./PublicView";
 import Login from "./Login";
 import AdminPanel from "./AdminPanel";
+import AboutUs from "./AboutUs";
 
 export default function App() {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -15,14 +17,19 @@ export default function App() {
   }, []);
 
   return (
-    <>
-      {isAdminLoggedIn ? (
-        <AdminPanel />
-      ) : showLogin ? (
-        <Login onLogin={() => setIsAdminLoggedIn(true)} />
-      ) : (
-        <PublicView />
-      )}
-    </>
+    <Routes>
+      <Route path="/" element={
+        <>
+          {isAdminLoggedIn ? (
+            <AdminPanel />
+          ) : showLogin ? (
+            <Login onLogin={() => setIsAdminLoggedIn(true)} />
+          ) : (
+            <PublicView />
+          )}
+        </>
+      } />
+      <Route path="/about-us" element={<AboutUs />} />
+    </Routes>
   );
 }

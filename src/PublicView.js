@@ -1,47 +1,75 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { db } from "./firebase";
 import { collection, getDocs, query, orderBy } from "firebase/firestore";
+import { motion } from "framer-motion";
+
 
 export default function PublicView() {
+    const FloatingElement = ({ children, delay = 0, className = "" }) => (
+    <motion.div
+      className={className}
+      initial={{ y: 20, opacity: 0 }}
+      animate={{
+        y: [0, -10, 0],
+        opacity: 1
+      }}
+      transition={{
+        duration: 3,
+        repeat: Infinity,
+        repeatType: "reverse",
+        delay: delay,
+        ease: "easeInOut"
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+
+  const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showBackToTop, setShowBackToTop] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [cart, setCart] = useState([]);
+  const [isCartOpen, setIsCartOpen] = useState(false);
 
   // Your WhatsApp number: +91 8380050609  --> format without "+"
   const WHATSAPP_PHONE = "918380050609";
 
-  // Handle scroll for back to top button
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowBackToTop(window.scrollY > 300);
-    };
-    
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
-        const snap = await getDocs(q);
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setProducts(list);
-        
-        // Extract unique categories from products
-        const uniqueCategories = [...new Set(list.map(product => product.category).filter(Boolean))];
-        setCategories(['All', ...uniqueCategories]);
-      } catch (e) {
-        console.error("Error loading products:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
+    const load = async () => {
+      try {
+        // 1. Remove orderBy() to get products without a specific sort order from Firestore.
+        const q = query(collection(db, "products"));
+        const snap = await getDocs(q);
+        let list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // 2. Shuffle the array to randomize the order.
+        // The sort() method with a random return value is a standard way to shuffle an array.
+        list = list.sort(() => Math.random() - 0.5);
+
+        setProducts(list);
+        
+        // Extract unique categories from the now-shuffled product list.
+        const uniqueCategories = [...new Set(list.map(product => product.category).filter(Boolean))];
+        setCategories(['All', ...uniqueCategories]);
+      } catch (e) {
+        console.error("Error loading products:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+
+
+
+
+
 
   // Preload first product image
   useEffect(() => {
@@ -57,15 +85,37 @@ export default function PublicView() {
     }
   }, [products]);
 
-  const makeWhatsAppUrl = (p) => {
-    const title = p.title || "Product";
-    const priceLine = p.price ? `Price: ₹${p.price}` : "";
-    const imageUrl = Array.isArray(p.imageURLs) && p.imageURLs.length > 0 ? p.imageURLs?.[0] : p.imageURL;
-    const message =
-      `${title}\n${priceLine}\n\nImage: ${imageUrl}\n\n` +
-      `I want to buy this. Please confirm availability.`;
-    return `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`;
-  };
+  // Load cart from localStorage on component mount
+  useEffect(() => {
+    const savedCart = localStorage.getItem('cart');
+    if (savedCart) {
+      setCart(JSON.parse(savedCart));
+    }
+  }, []);
+
+  // Save cart to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('cart', JSON.stringify(cart));
+  }, [cart]);
+
+const makeWhatsAppUrl = (p) => {
+  const title = p.title || "🛍️ Product";
+  const priceLine = p.price ? `💰 Price: ₹${p.price}` : "💰 Price on request";
+  const imageUrl =
+    Array.isArray(p.imageURLs) && p.imageURLs.length > 0
+      ? p.imageURLs[0]
+      : p.imageURL;
+
+  const message = 
+    `✨ Hi, I'm interested in this item!\n\n` +
+    `📦 *${title}*\n` +
+    `${priceLine}\n\n` +
+    (imageUrl ? `🖼️ Product Image: ${imageUrl}\n\n` : "") +
+    `✅ I’d like to confirm availability & place an order.\n\n` +
+    `Please share the details. 🙏`;
+
+  return `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`;
+};
 
   const handleShare = async (p) => {
     const imageUrl = Array.isArray(p.imageURLs) && p.imageURLs.length > 0 ? p.imageURLs?.[0] : p.imageURL;
@@ -87,9 +137,42 @@ export default function PublicView() {
     window.open(makeWhatsAppUrl(p), "_blank");
   };
 
-  const scrollToTop = useCallback(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  // Add to cart function
+  const addToCart = (product) => {
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.id === product.id);
+      if (existingItem) {
+        return prevCart.map(item =>
+          item.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
+        );
+      } else {
+        return [...prevCart, { ...product, quantity: 1 }];
+      }
+    });
+  };
+
+  // Remove from cart function
+  const removeFromCart = (productId) => {
+    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+  };
+
+  // Update quantity function
+  const updateQuantity = (productId, newQuantity) => {
+    if (newQuantity <= 0) {
+      removeFromCart(productId);
+      return;
+    }
+    
+    setCart(prevCart =>
+      prevCart.map(item =>
+        item.id === productId
+          ? { ...item, quantity: newQuantity }
+          : item
+      )
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 font-sans text-gray-800">
@@ -97,7 +180,10 @@ export default function PublicView() {
       <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-sm shadow-sm py-4 px-6 flex items-center justify-between animate-fade-in-down">
         <div className="flex items-center justify-center w-full">
           <h1 className="text-2xl font-bold bg-gradient-to-r from-teal-600 to-cyan-500 bg-clip-text text-transparent">
-            Sarees & Dresses
+            EasyShopi<FloatingElement delay={0.5} className="absolute top-40 right-20 text-3xl opacity-10 xl:top-40 xl:right-40">
+        🌸
+      </FloatingElement>
+
           </h1>
         </div>
         {/* Mobile menu button */}
@@ -113,12 +199,20 @@ export default function PublicView() {
             )}
           </svg>
         </button>
-        <button
-          onClick={scrollToTop}
-          className="hidden md:block text-sm font-medium text-teal-500 hover:text-teal-700 transition-colors"
-        >
-          Top ↑
-        </button>
+        <div className="hidden md:flex space-x-4 items-center">
+            <button
+              onClick={() => navigate('/about-us')}
+              className="text-sm font-medium text-teal-500 hover:text-teal-700 transition-colors"
+            >
+              About Us
+            </button>
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent("open-login"))}
+              className="text-sm font-medium text-pink-600 hover:text-pink-800 transition-colors"
+            >
+              Admin
+            </button>
+        </div>
       </header>
       
       {/* Mobile menu */}
@@ -126,10 +220,19 @@ export default function PublicView() {
         <div className="md:hidden bg-white shadow-lg animate-slide-down">
           <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
             <button
-              onClick={scrollToTop}
+              onClick={() => navigate('/about-us')}
               className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-teal-600 hover:bg-teal-50"
             >
-              Back to Top
+              About Us
+            </button>
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                window.dispatchEvent(new CustomEvent("open-login"));
+              }}
+              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-pink-600 hover:bg-pink-50"
+            >
+              Admin
             </button>
           </div>
         </div>
@@ -137,7 +240,7 @@ export default function PublicView() {
       
       {/* Category filter bar */}
       <div className="px-4 py-3 overflow-x-auto scrollbar-hide">
-        <div className="flex space-x-2 w-max">
+        <div className="flex space-x-2 w-max md:justify-center md:mx-auto md:w-full">
           {categories.map((category) => (
             <button
               key={category}
@@ -154,25 +257,21 @@ export default function PublicView() {
         </div>
       </div>
 
-      <main className="p-4 pt-0 md:max-w-xl md:mx-auto">
+      <main className="p-4 pt-0 max-w-7xl mx-auto">
         {loading ? (
           <div className="flex flex-col items-center justify-center mt-20 space-y-6">
             <div className="w-16 h-16 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
             <p className="text-gray-500 font-medium">Loading exquisite collection...</p>
-            <div className="w-full space-y-6">
-              {[...Array(3)].map((_, i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+              {[...Array(6)].map((_, i) => (
                 <div key={i} className="bg-white rounded-2xl shadow-lg overflow-hidden animate-pulse">
-                  <div className="flex flex-col sm:flex-row">
-                    <div className="w-full sm:w-1/3 h-48 bg-gradient-to-r from-gray-200 to-gray-300 rounded-t-2xl sm:rounded-l-2xl sm:rounded-tr-none"></div>
-                    <div className="p-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="h-6 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-3/4 mb-4"></div>
-                        <div className="h-4 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-1/2"></div>
-                      </div>
-                      <div className="mt-4 flex space-x-3">
-                        <div className="h-10 bg-gradient-to-r from-gray-200 to-gray-300 rounded-full flex-1"></div>
-                        <div className="h-10 bg-gradient-to-r from-gray-200 to-gray-300 rounded-full w-24"></div>
-                      </div>
+                  <div className="aspect-w-16 aspect-h-9 bg-gradient-to-r from-gray-200 to-gray-300 h-64"></div>
+                  <div className="p-4 space-y-3">
+                    <div className="h-6 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-3/4"></div>
+                    <div className="h-4 bg-gradient-to-r from-gray-200 to-gray-300 rounded w-1/2"></div>
+                    <div className="mt-4 flex space-x-3">
+                      <div className="h-10 bg-gradient-to-r from-gray-200 to-gray-300 rounded-full flex-1"></div>
+                      <div className="h-10 bg-gradient-to-r from-gray-200 to-gray-300 rounded-full w-24"></div>
                     </div>
                   </div>
                 </div>
@@ -186,66 +285,67 @@ export default function PublicView() {
             <p className="text-gray-400 text-sm mt-2">Check back soon for new arrivals!</p>
           </div>
         ) : (
-          <div className="space-y-6 mt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
             {products
               .filter(p => selectedCategory === 'All' || p.category === selectedCategory)
               .map((p, index) => (
               <div
                 key={p.id}
-                className="bg-white rounded-2xl shadow-lg overflow-hidden transition-all duration-300 ease-in-out transform hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] border border-gray-100"
+                className="bg-white rounded-2xl shadow-lg overflow-hidden flex flex-col transition-all duration-300 ease-in-out transform hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] border border-gray-100"
                 style={{
                   opacity: 0,
                   transform: "translateY(20px)",
                   animation: `fadeInUp 0.6s ease-out ${index * 0.1}s forwards`
                 }}
               >
-                <div className="flex flex-col sm:flex-row">
-                  <div className="relative flex-shrink-0 sm:w-1/3">
+                <div className="w-full h-64 bg-gray-200 relative">
                     {Array.isArray(p.imageURLs) && p.imageURLs.length > 0 ? (
                       <ImageSlider images={p.imageURLs} alt={p.title} />
                     ) : (
                       <img
                         src={p.imageURL}
                         alt={p.title}
-                        className="w-full h-48 sm:h-auto object-cover rounded-t-2xl sm:rounded-l-2xl sm:rounded-tr-none transition-transform duration-500 hover:scale-105"
+                        className="w-full h-full object-contain rounded-t-2xl"
                         loading="lazy"
                       />
                     )}
+                </div>
+                <div className="p-5 flex flex-col justify-between flex-1">
+                  <div>
+                    <h2 className="font-bold text-xl leading-tight line-clamp-2">
+  <span className="bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+    {p.title.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')}
+  </span>
+  {p.title.match(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu)}
+</h2>
+                    {p.price && (
+                      <p className="text-xl text-teal-600 mt-3 font-bold">
+                        ₹{p.price}
+                      </p>
+                    )}
                   </div>
-                  <div className="p-5 flex-1 flex flex-col justify-between">
-                    <div>
-                      <h2 className="font-bold text-xl leading-tight line-clamp-2 bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
-                        {p.title}
-                      </h2>
-                      {p.price && (
-                        <p className="text-xl text-teal-600 mt-3 font-bold">
-                          ₹{p.price}
-                        </p>
-                      )}
-                    </div>
 
-                    <div className="mt-5 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
-                      <a
-                        href={makeWhatsAppUrl(p)}
-                        className="flex-1 text-center py-4 px-6 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 hover:from-green-600 hover:to-emerald-700 flex items-center justify-center"
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 448 512" fill="currentColor">
-                          <path d="M380.9 97.1C339.5 55.7 283.7 32 223.9 32c-122.9 0-224 101.3-224 225.8 0 39.5 10.7 78 31.4 112.5L7.6 448l122.1-32.8c32.7 17.7 69.3 27 106.3 27 122.9 0 224-101.3 224-225.8 0-59.3-23.4-115.1-64.4-156.9zM223.9 417.8c-29.2 0-57.8-8.9-81.5-25.5l-5.6-3.3-60.8 16.3 16.6-62.1-3.7-5.9c-19.1-30.8-29.2-66.2-29.2-103.5 0-101.6 82.8-184.4 184.6-184.4 50 0 97.4 19.5 132.9 54.1 35.5 34.6 55.1 82.2 55.1 133 0 101.6-82.8 184.4-184.6 184.4zm105.7-142.3c-5.7-2.8-33.4-16.5-38.6-18.4-5.2-1.9-9-2.8-12.9 2.8-3.9 5.7-14.8 18.4-18.1 22.1-3.3 3.6-6.6 4.1-12.3 1.3-6.1-3.3-25.9-9.5-49.3-30.4-18.2-16.1-30.5-35.9-34-41.9-3.6-6-0.4-9.3 2.5-12.2 2.5-2.5 5.7-6.5 8.5-9.8 2.8-3.3 3.6-5.7 5.4-9.5 1.9-3.9.9-7.2-0.5-10.1-1.3-2.8-12.9-31.1-17.7-42.6-4.8-11.5-9.6-9.9-12.9-10.1-3.3-0.2-7-0.2-10.7-0.2-3.7 0-9.7 1.3-14.8 6.5-5.2 5.2-19.9 19.3-19.9 47.1 0 27.8 20.3 54.7 23.2 58.4 2.8 3.6 40 61.2 97.2 86.8 21.6 9.4 38.6 15.1 51.9 19.4 19.4 6.5 37.1 5.6 51-1.7 15.2-7.5 33.4-29.3 38.1-58 4.7-28.7 4.7-26.6 3.3-28.9-1.3-2.3-5-3.6-10.7-6.5z"/>
-                        </svg>
-                        Buy on WhatsApp
-                      </a>
-                      <button
-                        onClick={() => handleShare(p)}
-                        className="w-full sm:w-auto py-4 px-6 rounded-full border border-gray-300 text-gray-700 font-medium text-sm hover:bg-gray-100 transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center shadow-sm group"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 group-hover:text-teal-600 transition-colors duration-300" viewBox="0 0 512 512" fill="currentColor">
-                          <path d="M352 144c0 44.11-35.89 80-80 80s-80-35.89-80-80 35.89-80 80-80 80 35.89 80 80zm-80 16c-8.84 0-16 7.16-16 16v16h-48v-16c0-8.84-7.16-16-16-16h-16c-8.84 0-16 7.16-16 16v48c0 8.84 7.16 16 16 16h16c8.84 0 16-7.16 16-16v-16h48v16c0 8.84 7.16 16 16 16h16c8.84 0 16-7.16 16 16v-48c0-8.84-7.16-16-16-16h-16zm96-128c-52.94 0-96 43.06-96 96 0 14.86 3.48 29.13 9.74 42.42L256 224h106.26c6.26-13.29 9.74-27.56 9.74-42.42 0-52.94-43.06-96-96-96zm-96 0c-52.94 0-96 43.06-96 96 0 14.86 3.48 29.13 9.74 42.42L256 224h-106.26c-6.26-13.29-9.74-27.56-9.74-42.42 0-52.94 43.06-96 96-96zm176 128c0 88.37-71.63 160-160 160s-160-71.63-160-160h-32c-17.67 0-32 14.33-32 32v256c0 17.67 14.33 32 32 32h64c17.67 0 32-14.33 32-32V384c0-17.67-14.33-32-32-32h-32v-16c0-62.43 50.7-112 112-112s112 49.57 112 112v16h-32c-17.67 0-32 14.33-32 32v32c0 17.67 14.33 32 32 32h64c17.67 0 32-14.33 32-32V256c0-17.67-14.33-32-32-32h-32zM288 384h-64c-17.67 0-32-14.33-32-32v-32c0-17.67 14.33-32 32-32h64c17.67 0 32 14.33 32 32v32c0 17.67-14.33 32-32 32z"/>
-                        </svg>
-                        Share
-                      </button>
-                    </div>
+                  <div className="mt-5 flex flex-col space-y-3">
+                    <a
+                      href={makeWhatsAppUrl(p)}
+                      className="flex-1 text-center py-3 px-6 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 hover:from-green-600 hover:to-emerald-700 flex items-center justify-center"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 448 512" fill="currentColor">
+                        <path d="M380.9 97.1C339.5 55.7 283.7 32 223.9 32c-122.9 0-224 101.3-224 225.8 0 39.5 10.7 78 31.4 112.5L7.6 448l122.1-32.8c32.7 17.7 69.3 27 106.3 27 122.9 0 224-101.3 224-225.8 0-59.3-23.4-115.1-64.4-156.9zM223.9 417.8c-29.2 0-57.8-8.9-81.5-25.5l-5.6-3.3-60.8 16.3 16.6-62.1-3.7-5.9c-19.1-30.8-29.2-66.2-29.2-103.5 0-101.6 82.8-184.4 184.6-184.4 50 0 97.4 19.5 132.9 54.1 35.5 34.6 55.1 82.2 55.1 133 0 101.6-82.8 184.4-184.6 184.4zm105.7-142.3c-5.7-2.8-33.4-16.5-38.6-18.4-5.2-1.9-9-2.8-12.9 2.8-3.9 5.7-14.8 18.4-18.1 22.1-3.3 3.6-6.6 4.1-12.3 1.3-6.1-3.3-25.9-9.5-49.3-30.4-18.2-16.1-30.5-35.9-34-41.9-3.6-6-0.4-9.3 2.5-12.2 2.5-2.5 5.7-6.5 8.5-9.8 2.8-3.3 3.6-5.7 5.4-9.5 1.9-3.9.9-7.2-0.5-10.1-1.3-2.8-12.9-31.1-17.7-42.6-4.8-11.5-9.6-9.9-12.9-10.1-3.3-0.2-7-0.2-10.7-0.2-3.7 0-9.7 1.3-14.8 6.5-5.2 5.2-19.9 19.3-19.9 47.1 0 27.8 20.3 54.7 23.2 58.4 2.8 3.6 40 61.2 97.2 86.8 21.6 9.4 38.6 15.1 51.9 19.4 19.4 6.5 37.1 5.6 51-1.7 15.2-7.5 33.4-29.3 38.1-58 4.7-28.7 4.7-26.6 3.3-28.9-1.3-2.3-5-3.6-10.7-6.5z"/>
+                      </svg>
+                      Buy on WhatsApp
+                    </a>
+                    <button
+                      onClick={() => addToCart(p)}
+                      className="w-full sm:w-auto py-3 px-6 rounded-full bg-gradient-to-r from-teal-500 to-cyan-500 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                      Add to Cart
+                    </button>
                   </div>
                 </div>
               </div>
@@ -259,29 +359,106 @@ export default function PublicView() {
         Made for mobile • Secure WhatsApp checkout
       </footer>
 
-      {/* Floating admin access */}
+      {/* Floating cart icon */}
       <button
-        onClick={() => window.dispatchEvent(new CustomEvent("open-login"))}
-        className="fixed bottom-6 right-6 z-20 w-12 h-12 flex items-center justify-center bg-white text-pink-600 rounded-full shadow-lg border border-pink-100 transition-all duration-300 transform hover:scale-110 active:scale-95"
-        aria-label="Admin"
+        onClick={() => setIsCartOpen(true)}
+        className="fixed bottom-6 left-6 z-20 w-12 h-12 flex items-center justify-center bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-full shadow-lg transition-all duration-300 transform hover:scale-110 active:scale-95"
+        aria-label="Cart"
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
         </svg>
+        {cart.length > 0 && (
+          <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+            {cart.reduce((total, item) => total + item.quantity, 0)}
+          </span>
+        )}
       </button>
 
-      {/* Floating back to top button */}
-      <button
-        onClick={scrollToTop}
-        className={`fixed bottom-24 right-6 z-20 w-12 h-12 flex items-center justify-center bg-gradient-to-r from-teal-500 to-cyan-500 text-white rounded-full shadow-lg transition-all duration-300 transform hover:scale-110 active:scale-95 ${
-          showBackToTop ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
-        }`}
-        aria-label="Back to top"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-        </svg>
-      </button>
+      {/* Cart Drawer */}
+      {isCartOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden">
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setIsCartOpen(false)}></div>
+          <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-lg transform transition-transform duration-300 ease-in-out translate-y-0 h-3/4">
+            <div className="p-4 border-b border-gray-200">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-bold">Your Cart</h2>
+                <button onClick={() => setIsCartOpen(false)} className="text-gray-500 hover:text-gray-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(100% - 120px)' }}>
+              {cart.length === 0 ? (
+                <p className="text-center text-gray-500 mt-8">Your cart is empty</p>
+              ) : (
+                <>
+                  {cart.map((item) => (
+                    <div key={item.id} className="flex items-center py-4 border-b border-gray-100">
+                      <div className="w-16 h-16 bg-gray-200 rounded-lg overflow-hidden">
+                        {item.imageURLs && item.imageURLs.length > 0 ? (
+                          <img src={item.imageURLs[0]} alt={item.title} className="w-full h-full object-cover" loading="lazy" />
+                        ) : (
+                          <img src={item.imageURL} alt={item.title} className="w-full h-full object-cover" loading="lazy" />
+                        )}
+                      </div>
+                      <div className="ml-4 flex-1">
+                        <h3 className="font-medium">{item.title}</h3>
+                        <p className="text-teal-600 font-bold">₹{item.price}</p>
+                        <div className="flex items-center mt-2">
+                          <button
+                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                            className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-l"
+                          >
+                            -
+                          </button>
+                          <span className="w-10 h-8 flex items-center justify-center border-t border-b border-gray-300">
+                            {item.quantity}
+                          </span>
+                          <button
+                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                            className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-r"
+                          >
+                            +
+                          </button>
+                          <button
+                            onClick={() => removeFromCart(item.id)}
+                            className="ml-4 text-red-500 hover:text-red-700"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            {cart.length > 0 && (
+              <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 bg-white">
+                <button
+                  onClick={() => {
+                    // Generate WhatsApp message
+                    const message = `I'd like to order these products:\n\n${cart.map(item => `${item.title} x ${item.quantity} = ₹${item.price}`).join('\n')}\n\n${cart.map(item => `Product: ${item.title}\nLink: ${Array.isArray(item.imageURLs) && item.imageURLs.length > 0 ? item.imageURLs[0] : item.imageURL}`).join('\n\n')}`;
+                    window.open(`https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(message)}`, '_blank');
+                    setIsCartOpen(false);
+                  }}
+                  className="w-full py-3 px-6 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 448 512" fill="currentColor">
+                    <path d="M380.9 97.1C339.5 55.7 283.7 32 223.9 32c-122.9 0-224 101.3-224 225.8 0 39.5 10.7 78 31.4 112.5L7.6 448l122.1-32.8c32.7 17.7 69.3 27 106.3 27 122.9 0 224-101.3 224-225.8 0-59.3-23.4-115.1-64.4-156.9zM223.9 417.8c-29.2 0-57.8-8.9-81.5-25.5l-5.6-3.3-60.8 16.3 16.6-62.1-3.7-5.9c-19.1-30.8-29.2-66.2-29.2-103.5 0-101.6 82.8-184.4 184.6-184.4 50 0 97.4 19.5 132.9 54.1 35.5 34.6 55.1 82.2 55.1 133 0 101.6-82.8 184.4-184.6 184.4zm105.7-142.3c-5.7-2.8-33.4-16.5-38.6-18.4-5.2-1.9-9-2.8-12.9 2.8-3.9 5.7-14.8 18.4-18.1 22.1-3.3 3.6-6.6 4.1-12.3 1.3-6.1-3.3-25.9-9.5-49.3-30.4-18.2-16.1-30.5-35.9-34-41.9-3.6-6-0.4-9.3 2.5-12.2 2.5-2.5 5.7-6.5 8.5-9.8 2.8-3.3 3.6-5.7 5.4-9.5 1.9-3.9.9-7.2-0.5-10.1-1.3-2.8-12.9-31.1-17.7-42.6-4.8-11.5-9.6-9.9-12.9-10.1-3.3-0.2-7-0.2-10.7-0.2-3.7 0-9.7 1.3-14.8 6.5-5.2 5.2-19.9 19.3-19.9 47.1 0 27.8 20.3 54.7 23.2 58.4 2.8 3.6 40 61.2 97.2 86.8 21.6 9.4 38.6 15.1 51.9 19.4 19.4 6.5 37.1 5.6 51-1.7 15.2-7.5 33.4-29.3 38.1-58 4.7-28.7 4.7-26.6 3.3-28.9-1.3-2.3-5-3.6-10.7-6.5z"/>
+                  </svg>
+                  Send Order on WhatsApp
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       
       {/* Custom CSS for animations */}
       <style jsx global>{`
@@ -401,7 +578,7 @@ function ImageSlider({ images, alt }) {
   }, [goToNext]);
 
   return (
-    <div className="relative w-full pb-[100%] rounded-t-2xl sm:rounded-l-2xl sm:rounded-tr-none overflow-hidden bg-gray-200">
+    <div className="relative w-full h-full rounded-t-2xl overflow-hidden bg-gray-200">
       {images.map((image, index) => (
         <div
           key={index}
